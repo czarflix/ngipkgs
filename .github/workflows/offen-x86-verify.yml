@@ -1,0 +1,70 @@
+name: Offen x86_64 verify
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - offen-ngi-x86-verify
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Assert native x86_64 runner
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          printf 'RUNNER_ARCH=%s\n' "$arch"
+          test "$arch" = "x86_64"
+
+      - name: Build Offen and run smoke test
+        run: |
+          set -euo pipefail
+
+          mkdir -p logs
+
+          docker run --rm \
+            -e NIXPKGS_ALLOW_UNFREE=1 \
+            -v "$PWD:/work" \
+            -w /work \
+            nixos/nix:latest \
+            sh -lc '
+          set -euo pipefail
+
+          pkg=$(nix --extra-experimental-features nix-command build \
+            --impure \
+            --print-out-paths \
+            --expr '"'"'let ngipkgs = import ./. { system = builtins.currentSystem; }; in ngipkgs.offen'"'"' \
+            -L \
+            --show-trace)
+          printf "PKG=%s\n" "$pkg"
+
+          smoke=$(nix --extra-experimental-features nix-command build \
+            --impure \
+            --print-out-paths \
+            --expr '"'"'let ngipkgs = import ./. { system = builtins.currentSystem; }; in ngipkgs.offen.passthru.tests.smoke'"'"' \
+            -L \
+            --show-trace)
+          printf "SMOKE=%s\n" "$smoke"
+          ' |& tee logs/offen-ngipkgs-x86.log
+
+          grep '^PKG=' logs/offen-ngipkgs-x86.log
+          grep '^SMOKE=' logs/offen-ngipkgs-x86.log
+          grep 'revision=ec99082a37ffb5855bd84debfef227d41c7b403c' logs/offen-ngipkgs-x86.log
+
+      - name: Upload verification logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ngipkgs-offen-x86-logs
+          path: logs
+          if-no-files-found: error
